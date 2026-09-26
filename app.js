@@ -13,7 +13,7 @@
   const DEFAULTS = {
     cards: {}, dialogs: {}, favs: [], xp: 0,
     streak: { days: 0, last: null }, today: { date: null, xp: 0 },
-    settings: { jp: true, kana: true, romaji: true, de: true, autoplay: true, dir: 'de-jp', audio: 'mp3', goal: 50, asr: false },
+    settings: { jp: true, kana: true, romaji: true, de: true, autoplay: true, dir: 'de-jp', audio: 'mp3', goal: 50, asr: false, mode: 'online' },
   };
   let S = load();
   function load() {
@@ -297,6 +297,65 @@
     reset() { this.worker?.terminate(); this.worker = null; this.loading = null; this.files = {}; },
   };
 
+  // Online-Modus: Spracherkennung des Browsers (Google bzw. Siri) – schnell, braucht Internet
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let activeRec = null;
+  function listenOnline(id, btn, out) {
+    if (activeRec) { activeRec.abort(); activeRec = null; return; }
+    stopAudio();
+    const p = P[id];
+    const r = new SR();
+    // interimResults: Safari liefert oft kein Endergebnis, dann wird das letzte Zwischenergebnis bewertet
+    r.lang = 'ja-JP'; r.maxAlternatives = 5; r.interimResults = true; r.continuous = false;
+    activeRec = r;
+    btn.classList.add('listening');
+    out.innerHTML = `<div class="speak-result ok">🎤 Ich höre zu … sprich jetzt: <b>${esc(p.romaji)}</b></div>`;
+    let alts = [], judged = false;
+    const judge = () => {
+      if (judged || !alts.length) return;
+      judged = true;
+      let best = { t: alts[0], s: 0 };
+      for (const t of alts) { const s = similarity(t, p); if (s > best.s) best = { t, s }; }
+      const pct = Math.round(best.s * 100);
+      let cls = 'bad', msg = 'Nochmal versuchen – hör dir das Audio an und sprich langsam.';
+      if (best.s >= .8) { cls = 'good'; msg = 'Perfekt! すばらしい！ +15 ⭐'; addXP(15); }
+      else if (best.s >= .55) { cls = 'ok'; msg = 'Fast! Noch etwas deutlicher. +5 ⭐'; addXP(5); }
+      out.innerHTML = `<div class="speak-result ${cls}">${msg}<br><span class="small">Verstanden: „<span lang="ja">${esc(best.t)}</span>“ · ${pct} % Übereinstimmung</span></div>`;
+    };
+    r.onresult = e => {
+      const res = e.results[e.results.length - 1];
+      alts = [...res].map(a => a.transcript).filter(Boolean);
+      if (res.isFinal) { judge(); try { r.stop(); } catch { /* schon beendet */ } }
+    };
+    r.onerror = e => {
+      if (e.error === 'aborted') return;
+      judged = true;
+      const m = {
+        'not-allowed': 'Mikrofon ist blockiert – bitte in den Browser-Einstellungen erlauben (iPhone zusätzlich: Siri & Diktierfunktion aktivieren).',
+        'service-not-allowed': 'Spracherkennung ist deaktiviert – iPhone: Einstellungen → Allgemein → Tastatur → Diktierfunktion einschalten.',
+        'no-speech': 'Nichts gehört. Tippe auf 🎤 und sprich direkt los.',
+        'network': 'Keine Verbindung zur Spracherkennung. Ohne Internet auf der Startseite ✈️ Offline wählen.',
+      }[e.error] || `Fehler bei der Spracherkennung (${e.error}).`;
+      out.innerHTML = `<div class="speak-result bad">${m}</div>`;
+    };
+    r.onend = () => {
+      btn.classList.remove('listening');
+      if (activeRec === r) activeRec = null;
+      if (!judged) {
+        if (alts.length) judge();
+        else out.innerHTML = `<div class="speak-result bad">Nichts verstanden. Tippe auf 🎤 und sprich direkt los.</div>`;
+      }
+    };
+    try { r.start(); } catch { btn.classList.remove('listening'); activeRec = null; }
+  }
+
+  // Mikrofon-Knopf: online → Browser-Spracherkennung, offline (oder kein Netz) → eigene Aufnahme + Whisper
+  function onMic(id, btn, out) {
+    const online = S.settings.mode !== 'offline' && navigator.onLine !== false;
+    if (online && SR && !rec) return listenOnline(id, btn, out);
+    return recordAndCompare(id, btn, out);
+  }
+
   async function recordAndCompare(id, btn, out) {
     if (rec) return rec.stop();
     if (!canRecord) {
@@ -334,8 +393,11 @@
       if (out.contains(b)) playSrc(url, b);
     });
 
-    if (!S.settings.asr) {
-      asrEl.innerHTML = '💡 Für automatische Bewertung: ⚙️ → „Offline-Bewertung laden“.';
+    const offlineMode = S.settings.mode === 'offline' || navigator.onLine === false;
+    if (!S.settings.asr || !offlineMode) {
+      asrEl.innerHTML = !S.settings.asr
+        ? '💡 Für automatische Bewertung ohne Internet: auf der Startseite ✈️ Offline wählen und die Offline-Bewertung laden.'
+        : '💡 Automatische Bewertung: in diesem Browser nur im ✈️ Offline-Modus.';
       return;
     }
     asrEl.innerHTML = ASR.loading ? '⏳ Werte aus …' : '⏳ Bewertung wird vorbereitet (einmal pro Start) …';
@@ -417,6 +479,12 @@
           <button class="btn" data-cta="${cta}">${ctaText}</button>
         </div>
       </div>
+      <div class="mode-switch">
+        <div class="row-top"><b>🎤 Aussprache</b><div class="seg">
+          <button data-mode="online" class="${S.settings.mode !== 'offline' ? 'on' : ''}">📶 Online</button>
+          <button data-mode="offline" class="${S.settings.mode === 'offline' ? 'on' : ''}">✈️ Offline</button></div></div>
+        <div id="mode-desc">${modeDesc()}</div>
+      </div>
       <div class="stats">
         <div class="stat"><b>🔥 ${streakDays()}</b><span>Tage in Folge</span></div>
         <div class="stat"><b>🧠 ${seen}</b><span>von ${D.phrases.length} gesehen</span></div>
@@ -433,7 +501,44 @@
       else if (c === 'new') startCards(fresh.slice(0, 10), 'Neue Phrasen');
       else go('quiz');
     });
+    $view.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+    updateModeDesc();
     bindCatTiles();
+  }
+
+  // ── Online/Offline-Modus der Aussprache-Bewertung ────────────────────────
+  function modeDesc(pct) {
+    const s = S.settings;
+    if (s.mode !== 'offline') {
+      return `<div class="desc">Bewertung per Google/Siri-Spracherkennung – schnell, braucht Internet.</div>`;
+    }
+    if (asrDownloading) {
+      return `<div class="desc">Offline-Bewertung wird geladen … ${pct != null ? Math.round(pct * 100) + ' %' : ''} – App offen lassen</div>
+        <div class="bar"><i style="width:${Math.round((pct || 0) * 100)}%"></i></div>`;
+    }
+    return s.asr
+      ? `<div class="desc">Bewertung direkt auf dem Handy (Whisper) – ohne Internet, dauert einige Sekunden.</div>`
+      : `<div class="desc">⚠️ Offline-Bewertung nicht geladen – nur Aufnehmen &amp; Vergleichen. <a href="#" id="mode-dl">Jetzt laden (~80 MB)</a></div>`;
+  }
+  function updateModeDesc(pct) {
+    const el = document.getElementById('mode-desc');
+    if (!el) return;
+    el.innerHTML = modeDesc(pct);
+    el.querySelector('#mode-dl')?.addEventListener('click', e => { e.preventDefault(); downloadAsr(); });
+  }
+  function setMode(mode) {
+    const s = S.settings;
+    if (s.mode === mode) return;
+    s.mode = mode; save();
+    $view.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+    if (mode === 'offline') {
+      if (s.asr) ASR.ensure().catch(() => {}); // Modell vorab in den Speicher laden
+      else if (!asrDownloading && confirm('Für den Offline-Modus wird einmalig die Offline-Bewertung geladen (~80 MB, WLAN empfohlen). Jetzt laden?')) downloadAsr();
+    } else {
+      ASR.reset(); // Speicher freigeben – online wird Whisper nicht gebraucht
+    }
+    updateModeDesc();
+    toast(mode === 'offline' ? '✈️ Offline-Modus' : '📶 Online-Modus');
   }
   function catTile(c) {
     const pr = catProgress(c.id);
@@ -481,6 +586,8 @@
   function startCards(ids, title) {
     if (!ids.length) return toast('Keine Karten gefunden');
     sess = { type: 'cards', title, queue: [...ids], total: ids.length, done: 0, xp: 0, stats: { again: 0, hard: 0, good: 0 } };
+    // Offline: Whisper schon beim Start der Runde in den Speicher laden, damit die erste Bewertung nicht wartet
+    if (S.settings.mode === 'offline' && S.settings.asr) ASR.ensure().catch(() => {});
     renderCard();
   }
   function renderCard() {
@@ -498,7 +605,7 @@
     const front = dir === 'de-jp'
       ? `<div class="q-label" style="margin-top:18px">Wie sagt man auf Japanisch?</div><div class="question">${esc(p.de)}</div>`
       : `<div class="q-label" style="margin-top:18px">Was bedeutet das?</div>${phraseHTML(p, { hide: ['de'] })}
-         <div class="actions"><button class="round-btn" data-play="${id}" aria-label="Anhören">🔊</button></div>`;
+         <div class="actions right"><button class="round-btn" data-play="${id}" aria-label="Anhören">🔊</button></div>`;
     $view.innerHTML = `${progressTop(sess.done, sess.total)}
       <div class="flash" id="flash"><div class="flash-inner" id="flash-inner">
         <div class="face front" style="--c:${c.color}">
@@ -509,9 +616,9 @@
           <div class="top">${catTag(p)}${videoTag(p)}</div>
           ${phraseHTML(p)}
           <div style="margin-top:12px">${tipHTML(p)}</div>
-          <div class="actions"><button class="round-btn" data-play="${id}" aria-label="Anhören">🔊</button>
-            <button class="round-btn mic" id="mic" aria-label="Nachsprechen">🎤</button>
-            <span class="small muted">Anhören, aufnehmen &amp; vergleichen</span></div>
+          <div class="actions right"><span class="small muted">${S.settings.mode === 'offline' ? 'Anhören, aufnehmen &amp; vergleichen' : 'Anhören &amp; nachsprechen'}</span>
+            <button class="round-btn" data-play="${id}" aria-label="Anhören">🔊</button>
+            <button class="round-btn mic" id="mic" aria-label="Nachsprechen">🎤</button></div>
           <div id="speak-out" style="margin-top:10px"></div>
         </div>
       </div></div>
@@ -531,7 +638,7 @@
       document.getElementById('rate').hidden = false;
       if (S.settings.autoplay) play(id, flash.querySelector('.back [data-play]'));
     });
-    document.getElementById('mic').addEventListener('click', e => recordAndCompare(id, e.currentTarget, out));
+    document.getElementById('mic').addEventListener('click', e => onMic(id, e.currentTarget, out));
     $view.querySelectorAll('[data-grade]').forEach(b => b.addEventListener('click', () => {
       const g = b.dataset.grade;
       rateCard(id, g); sess.stats[g]++;
@@ -882,17 +989,19 @@
     }
   }
   async function downloadAsr() {
-    asrDownloading = true; renderAsrBox();
-    ASR.onProgress = pct => renderAsrBox(pct);
+    if (asrDownloading) return;
+    asrDownloading = true; renderAsrBox(); updateModeDesc();
+    ASR.onProgress = pct => { renderAsrBox(pct); updateModeDesc(pct); };
     try {
       await ASR.ensure();
       S.settings.asr = true; save();
       navigator.storage?.persist?.().catch(() => {});
+      if (S.settings.mode !== 'offline') ASR.reset(); // nur geladen, nicht benutzt → Speicher freigeben
       toast('✅ Offline-Bewertung bereit');
     } catch (err) {
       toast('⚠️ Laden fehlgeschlagen: ' + err.message, 4000);
     } finally {
-      asrDownloading = false; ASR.onProgress = null; renderAsrBox();
+      asrDownloading = false; ASR.onProgress = null; renderAsrBox(); updateModeDesc();
     }
   }
 

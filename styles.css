@@ -1,36 +1,23 @@
+/* Farbwelt: elegantes Schiefergrau (fest, unabhängig vom Hell/Dunkel-Modus des Geräts) */
 :root {
-  --bg: #FFF7EC;
-  --bg-2: #FFEFD9;
-  --card: #FFFFFF;
-  --ink: #2B2340;
-  --ink-2: #6B6385;
-  --line: #EDE3D3;
+  --bg: #2F333B;
+  --bg-2: #393E47;
+  --card: #3B404A;
+  --ink: #EEF0F4;
+  --ink-2: #A9B0BC;
+  --line: #4B515C;
   --accent: #FF6B6B;
   --accent-2: #FFB84C;
   --good: #2EC4B6;
-  --good-bg: #DDF7F4;
+  --good-bg: #1E4845;
   --bad: #EF476F;
-  --bad-bg: #FDE2E9;
-  --warn-bg: #FFF1CC;
-  --shadow: 0 6px 0 rgba(43, 35, 64, .08), 0 10px 24px rgba(43, 35, 64, .08);
+  --bad-bg: #55303B;
+  --warn-bg: #4A4331;
+  --romaji: #B7A8FF;
+  --shadow: 0 6px 0 rgba(0, 0, 0, .22), 0 10px 24px rgba(0, 0, 0, .22);
   --radius: 22px;
   --tabbar-h: 68px;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1B1728;
-    --bg-2: #241F35;
-    --card: #2B2540;
-    --ink: #F6F1FF;
-    --ink-2: #B7AED3;
-    --line: #3C3456;
-    --good-bg: #173D3B;
-    --bad-bg: #4A1F2D;
-    --warn-bg: #43391C;
-    --shadow: 0 6px 0 rgba(0, 0, 0, .25), 0 10px 24px rgba(0, 0, 0, .25);
-    color-scheme: dark;
-  }
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -159,8 +146,7 @@ main { padding: 6px 16px 24px; max-width: 640px; margin: 0 auto; outline: none; 
 .phrase { display: flex; flex-direction: column; gap: 6px; }
 .phrase .jp { font-size: 2rem; font-weight: 800; line-height: 1.25; word-break: keep-all; overflow-wrap: anywhere; }
 .phrase .kana { font-size: 1.05rem; color: var(--ink-2); }
-.phrase .romaji { font-size: 1.2rem; font-weight: 700; color: #7B61FF; }
-@media (prefers-color-scheme: dark) { .phrase .romaji { color: #B3A4FF; } }
+.phrase .romaji { font-size: 1.2rem; font-weight: 700; color: var(--romaji); }
 .phrase .de { font-size: 1.1rem; font-weight: 700; }
 .phrase.compact .jp { font-size: 1.3rem; }
 .phrase.compact .romaji { font-size: 1rem; }
@@ -168,8 +154,7 @@ main { padding: 6px 16px 24px; max-width: 640px; margin: 0 auto; outline: none; 
 .tip { background: var(--warn-bg); border-radius: 14px; padding: 10px 12px; font-size: .9rem; line-height: 1.4; }
 .tag { display: inline-block; font-size: .7rem; font-weight: 800; padding: 3px 8px; border-radius: 99px;
   background: var(--bg-2); color: var(--ink-2); }
-.tag.video { background: #FFE0E0; color: #C0392B; }
-@media (prefers-color-scheme: dark) { .tag.video { background: #4A2323; color: #FFB3B3; } }
+.tag.video { background: #5A3036; color: #FFB3B3; }
 .actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
 
 /* ── Karteikarten ───────────────────────────────────────── */
@@ -278,7 +263,7 @@ main { padding: 6px 16px 24px; max-width: 640px; margin: 0 auto; outline: none; 
 }
 .show .jp { font-size: clamp(2.4rem, 13vw, 5rem); font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
 .show .kana { font-size: 1.3rem; color: var(--ink-2); }
-.show .romaji { font-size: 1.4rem; font-weight: 700; color: #7B61FF; }
+.show .romaji { font-size: 1.4rem; font-weight: 700; color: var(--romaji); }
 .show .de { font-size: 1.1rem; }
 .show .close { position: absolute; top: calc(14px + env(safe-area-inset-top)); right: 16px; }
 .show .rotate { position: absolute; top: calc(14px + env(safe-area-inset-top)); left: 16px; }
@@ -319,3 +304,16 @@ main { padding: 6px 16px 24px; max-width: 640px; margin: 0 auto; outline: none; 
 .rec-actions .btn.playing { animation: pulse .8s infinite; }
 .speak-result .asr:empty { display: none; }
 #asr-box .bar { margin-top: 8px; }
+
+/* Bedienknöpfe rechts – einhändig mit dem rechten Daumen erreichbar */
+.actions.right { justify-content: flex-end; align-self: stretch; }
+.actions.right > span { flex: 1; }
+.actions.right .round-btn { width: 60px; height: 60px; }
+
+/* Online/Offline-Schalter auf der Startseite */
+.mode-switch { margin-top: 12px; background: var(--card); border-radius: 18px; padding: 12px 14px; box-shadow: 0 3px 0 var(--line); }
+.mode-switch .row-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mode-switch .seg button { padding: 8px 12px; font-size: .9rem; white-space: nowrap; }
+.mode-switch .seg button.on { background: var(--accent); color: #fff; }
+.mode-switch .desc { font-size: .8rem; color: var(--ink-2); margin-top: 6px; line-height: 1.35; }
+.mode-switch .bar { margin-top: 8px; }

@@ -1,5 +1,5 @@
 /* Offline-Cache: App-Dateien + alle MP3s vorab, Schriften bei erster Nutzung. */
-const VERSION = 'nr-v4';
+const VERSION = 'nr-v5';
 importScripts('data.js');
 
 const CORE = ['./', 'index.html', 'styles.css', 'app.js', 'data.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'whisper-worker.js'];
