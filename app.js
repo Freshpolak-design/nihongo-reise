@@ -13,7 +13,7 @@
   const DEFAULTS = {
     cards: {}, dialogs: {}, favs: [], xp: 0,
     streak: { days: 0, last: null }, today: { date: null, xp: 0 },
-    settings: { jp: true, kana: true, romaji: true, de: true, autoplay: true, dir: 'de-jp', audio: 'mp3', goal: 50 },
+    settings: { jp: true, kana: true, romaji: true, de: true, autoplay: true, dir: 'de-jp', audio: 'mp3', goal: 50, asr: false },
   };
   let S = load();
   function load() {
@@ -152,8 +152,7 @@
     speechSynthesis.speak(u);
   }
 
-  // ── Spracherkennung: selbst sprechen & vergleichen ───────────────────────
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // ── Aussprache: eigene Aufnahme (ohne System-Signalton) + Offline-Bewertung ─
   const KANJI_DIGITS = { '一': '1', '二': '2', '三': '3', '四': '4', '五': '5', '六': '6', '七': '7', '八': '8', '九': '9' };
   function normJa(s) {
     return String(s).normalize('NFKC').toLowerCase()
@@ -177,41 +176,181 @@
     if (!h) return 0;
     return Math.max(...targets.map(t => 1 - lev(h, t) / Math.max(h.length, t.length)));
   }
-  let activeRec = null;
-  function listen(id, btn, out) {
-    if (!SR) {
-      out.innerHTML = `<div class="speak-result bad">🎤 Spracherkennung wird von diesem Browser nicht unterstützt. Am besten Chrome auf Android nutzen.</div>`;
+
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const canRecord = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder && AudioCtx);
+
+  // Nimmt auf, bis nach dem Sprechen ~1,2 s Stille kommt (oder erneut getippt wird).
+  let rec = null;
+  async function record(btn) {
+    const ctx = new AudioCtx();
+    ctx.resume().catch(() => {});
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
+    } catch (err) { ctx.close().catch(() => {}); throw err; }
+    const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(m => MediaRecorder.isTypeSupported(m));
+    const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks = [];
+    mr.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    const an = ctx.createAnalyser(); an.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+
+    return new Promise(resolve => {
+      const t0 = performance.now();
+      let spoke = false, signal = false, lastLoud = t0, floor = 0.01, timer = 0;
+      const stop = () => {
+        if (!rec) return;
+        rec = null; clearInterval(timer);
+        btn.style.removeProperty('--lvl');
+        if (mr.state !== 'inactive') mr.stop(); else finish();
+      };
+      // Mikrofon sofort freigeben – iOS spielt sonst leise über die Hörmuschel weiter
+      const finish = () => {
+        stream.getTracks().forEach(t => t.stop());
+        ctx.close().catch(() => {});
+        resolve(new Blob(chunks, { type: mr.mimeType || mime || 'audio/webm' }));
+      };
+      mr.onstop = finish;
+      const tick = () => {
+        an.getFloatTimeDomainData(buf);
+        let sum = 0; for (const v of buf) sum += v * v;
+        const rms = Math.sqrt(sum / buf.length), now = performance.now();
+        if (now - t0 < 300) floor = Math.max(floor, rms * 1.5); // Grundrauschen der ersten Millisekunden
+        btn.style.setProperty('--lvl', Math.min(1, rms * 10).toFixed(2));
+        if (rms > 0) signal = true;
+        if (rms > Math.max(0.015, floor * 2)) { spoke = true; lastLoud = now; }
+        if ((spoke && now - lastLoud > 1200) || now - t0 > 8000 || (signal && !spoke && now - t0 > 5000)) stop();
+      };
+      rec = { stop };
+      mr.start();
+      timer = setInterval(tick, 50); // Timer statt requestAnimationFrame: läuft auch, wenn der Bildschirm nicht neu zeichnet
+    });
+  }
+
+  function playSrc(src, btn) {
+    stopAudio();
+    return new Promise(resolve => {
+      const a = new Audio(src);
+      currentAudio = a; setPlaying(btn, true);
+      const done = () => { if (currentAudio === a) { currentAudio = null; setPlaying(btn, false); } resolve(); };
+      a.onended = a.onerror = done;
+      a.play().catch(done);
+    });
+  }
+
+  // 16 kHz mono für Whisper; einfache Mittelwert-Dezimation reicht für Sprache
+  async function toMono16k(blob) {
+    const ctx = new AudioCtx();
+    try {
+      const b = await ctx.decodeAudioData(await blob.arrayBuffer());
+      const ratio = b.sampleRate / 16000, n = Math.floor(b.length / ratio);
+      const chans = [...Array(b.numberOfChannels)].map((_, c) => b.getChannelData(c));
+      const out = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const s = Math.floor(i * ratio), e = Math.max(s + 1, Math.floor((i + 1) * ratio));
+        let sum = 0;
+        for (const ch of chans) for (let j = s; j < e; j++) sum += ch[j];
+        out[i] = sum / ((e - s) * chans.length);
+      }
+      return out;
+    } finally { ctx.close().catch(() => {}); }
+  }
+
+  // Whisper läuft in einem Worker, das Modell wird nur auf Wunsch geladen
+  const ASR = {
+    worker: null, loading: null, seq: 0, pending: new Map(), files: {}, onProgress: null,
+    ensure() {
+      if (this.loading) return this.loading;
+      this.worker = new Worker('whisper-worker.js', { type: 'module' });
+      this.loading = new Promise((res, rej) => {
+        this.worker.onmessage = e => {
+          const m = e.data;
+          if (m.type === 'progress') {
+            this.files[m.file] = m;
+            const all = Object.values(this.files);
+            const pct = all.reduce((s, f) => s + (f.loaded || 0), 0) / Math.max(1, all.reduce((s, f) => s + (f.total || 0), 0));
+            this.onProgress?.(pct);
+          } else if (m.type === 'ready') res();
+          else if (m.type === 'result') { this.pending.get(m.id)?.res(m); this.pending.delete(m.id); }
+          else if (m.type === 'error') {
+            if (m.id && this.pending.has(m.id)) { this.pending.get(m.id).rej(new Error(m.message)); this.pending.delete(m.id); }
+            else { rej(new Error(m.message)); this.reset(); }
+          }
+        };
+        this.worker.onerror = e => { rej(new Error(e.message || 'Worker-Fehler')); this.reset(); };
+      });
+      this.worker.postMessage({ type: 'load' });
+      return this.loading;
+    },
+    async transcribe(audio) {
+      await this.ensure();
+      const id = ++this.seq;
+      return new Promise((res, rej) => {
+        this.pending.set(id, { res, rej });
+        this.worker.postMessage({ type: 'transcribe', id, audio }, [audio.buffer]);
+      });
+    },
+    reset() { this.worker?.terminate(); this.worker = null; this.loading = null; this.files = {}; },
+  };
+
+  async function recordAndCompare(id, btn, out) {
+    if (rec) return rec.stop();
+    if (!canRecord) {
+      out.innerHTML = `<div class="speak-result bad">🎤 Aufnahme wird von diesem Browser nicht unterstützt.</div>`;
       return;
     }
-    if (activeRec) { activeRec.abort(); activeRec = null; return; }
-    stopAudio();
     const p = P[id];
-    const r = new SR();
-    r.lang = 'ja-JP'; r.maxAlternatives = 5; r.interimResults = false; r.continuous = false;
-    activeRec = r;
-    btn.classList.add('listening');
-    out.innerHTML = `<div class="speak-result ok">🎤 Ich höre zu … sprich jetzt: <b>${esc(p.romaji)}</b></div>`;
-    r.onresult = e => {
-      const alts = [...e.results[0]].map(a => a.transcript);
-      let best = { t: alts[0] || '', s: 0 };
-      for (const t of alts) { const s = similarity(t, p); if (s > best.s) best = { t, s }; }
-      const pct = Math.round(best.s * 100);
-      let cls = 'bad', msg = 'Nochmal versuchen – hör dir das Audio an und sprich langsam.';
-      if (best.s >= .85) { cls = 'good'; msg = 'Perfekt! すばらしい！ +15 ⭐'; addXP(15); }
-      else if (best.s >= .6) { cls = 'ok'; msg = 'Fast! Noch etwas deutlicher. +5 ⭐'; addXP(5); }
-      out.innerHTML = `<div class="speak-result ${cls}">${msg}<br><span class="small">Verstanden: „<span lang="ja">${esc(best.t)}</span>“ · ${pct} % Übereinstimmung</span></div>`;
-    };
-    r.onerror = e => {
-      const m = {
-        'not-allowed': 'Mikrofon ist blockiert – bitte in den Browser-Einstellungen erlauben.',
-        'no-speech': 'Nichts gehört. Tippe auf 🎤 und sprich direkt los.',
-        'network': 'Spracherkennung braucht eine Internetverbindung.',
-        'aborted': 'Abgebrochen.',
-      }[e.error] || `Fehler bei der Spracherkennung (${e.error}).`;
-      out.innerHTML = `<div class="speak-result bad">${m}</div>`;
-    };
-    r.onend = () => { btn.classList.remove('listening'); if (activeRec === r) activeRec = null; };
-    try { r.start(); } catch { btn.classList.remove('listening'); activeRec = null; }
+    stopAudio();
+    btn.classList.add('recording'); btn.textContent = '⏹';
+    out.innerHTML = `<div class="speak-result ok">🎙️ Sprich jetzt: <b>${esc(p.romaji)}</b><br><span class="small">Stoppt automatisch, wenn du fertig bist – oder tippe ⏹.</span></div>`;
+    let blob;
+    try { blob = await record(btn); }
+    catch (err) {
+      const denied = err?.name === 'NotAllowedError';
+      out.innerHTML = `<div class="speak-result bad">${denied
+        ? '🎤 Kein Mikrofon-Zugriff. iPhone: Einstellungen → Safari → Mikrofon → „Erlauben“. Android: Schloss-Symbol neben der Adresse → Mikrofon.'
+        : `🎤 Mikrofon konnte nicht gestartet werden (${esc(err?.message || err)}).`}</div>`;
+      return;
+    } finally { btn.classList.remove('recording'); btn.textContent = '🎤'; }
+    if (blob.size < 800) { out.innerHTML = `<div class="speak-result bad">Nichts aufgenommen – tippe 🎤 und sprich direkt los.</div>`; return; }
+
+    const url = URL.createObjectURL(blob);
+    out.innerHTML = `<div class="speak-result ok">
+        <div class="rec-actions">
+          <button class="btn secondary" data-mine>▶️ Ich</button>
+          <button class="btn secondary" data-compare>🔁 Profi → Ich</button>
+        </div>
+        <div class="asr small"></div></div>`;
+    const box = out.firstElementChild, asrEl = box.querySelector('.asr');
+    box.querySelector('[data-mine]').addEventListener('click', e => playSrc(url, e.currentTarget));
+    box.querySelector('[data-compare]').addEventListener('click', async e => {
+      const b = e.currentTarget;
+      await playSrc(`audio/${id}.mp3`, b);
+      await new Promise(r => setTimeout(r, 350));
+      if (out.contains(b)) playSrc(url, b);
+    });
+
+    if (!S.settings.asr) {
+      asrEl.innerHTML = '💡 Für automatische Bewertung: ⚙️ → „Offline-Bewertung laden“.';
+      return;
+    }
+    asrEl.innerHTML = ASR.loading ? '⏳ Werte aus …' : '⏳ Bewertung wird vorbereitet (einmal pro Start) …';
+    try {
+      const { text } = await ASR.transcribe(await toMono16k(blob));
+      if (!out.contains(box)) return;
+      const s = similarity(text, p), pct = Math.round(s * 100);
+      let cls = 'bad', msg = 'Nochmal versuchen – hör dir die Profi-Stimme an und sprich langsam.';
+      if (s >= .8) { cls = 'good'; msg = 'Perfekt! すばらしい！ +15 ⭐'; addXP(15); }
+      else if (s >= .55) { cls = 'ok'; msg = 'Fast! Noch etwas deutlicher. +5 ⭐'; addXP(5); }
+      box.className = `speak-result ${cls}`;
+      asrEl.innerHTML = `<b>${msg}</b><br>Verstanden: „<span lang="ja">${esc(text || '–')}</span>“ · ${pct} % Übereinstimmung`;
+    } catch (err) {
+      asrEl.textContent = `⚠️ Bewertung fehlgeschlagen: ${err.message}`;
+    }
   }
 
   // ── Darstellung einer Phrase (Ebenen einzeln schaltbar) ──────────────────
@@ -372,7 +511,7 @@
           <div style="margin-top:12px">${tipHTML(p)}</div>
           <div class="actions"><button class="round-btn" data-play="${id}" aria-label="Anhören">🔊</button>
             <button class="round-btn mic" id="mic" aria-label="Nachsprechen">🎤</button>
-            <span class="small muted">Anhören &amp; nachsprechen</span></div>
+            <span class="small muted">Anhören, aufnehmen &amp; vergleichen</span></div>
           <div id="speak-out" style="margin-top:10px"></div>
         </div>
       </div></div>
@@ -392,7 +531,7 @@
       document.getElementById('rate').hidden = false;
       if (S.settings.autoplay) play(id, flash.querySelector('.back [data-play]'));
     });
-    document.getElementById('mic').addEventListener('click', e => listen(id, e.currentTarget, out));
+    document.getElementById('mic').addEventListener('click', e => recordAndCompare(id, e.currentTarget, out));
     $view.querySelectorAll('[data-grade]').forEach(b => b.addEventListener('click', () => {
       const g = b.dataset.grade;
       rateCard(id, g); sess.stats[g]++;
@@ -689,7 +828,9 @@
       <div class="setting"><label>Test</label><button class="btn secondary" id="s-test" style="padding:8px 14px">🔊 こんにちは</button></div>
       <div class="section-title">Lernen</div>
       <div class="setting"><label>Tagesziel</label>${seg('goal', [[30, '30 ⭐'], [50, '50 ⭐'], [100, '100 ⭐']])}</div>
-      <div class="setting"><label>Spracherkennung<small>${SR ? '✅ verfügbar (braucht Internet)' : '❌ in diesem Browser nicht verfügbar'}</small></label></div>
+      <div class="section-title">🎤 Aussprache</div>
+      <div class="setting"><label>Aufnehmen & Vergleichen<small>${canRecord ? '✅ funktioniert offline, ohne Signalton' : '❌ in diesem Browser nicht möglich'}</small></label></div>
+      <div class="setting" id="asr-box"></div>
       <div class="setting"><label>Japanische Handy-Stimme<small>${jaVoice() ? '✅ ' + esc(jaVoice().name) : '⚠️ keine gefunden – MP3 nutzen'}</small></label></div>
       <button class="btn bad block" id="s-reset" style="margin-top:14px">🗑️ Fortschritt zurücksetzen</button>
       <p class="small muted" style="text-align:center;margin-top:16px">Nihongo Reise · ${D.phrases.length} Phrasen · Grundlage:
@@ -713,6 +854,46 @@
       S = structuredClone(DEFAULTS); S.settings = s; save(); $sheet.hidden = true; sess = null; render(); toast('Fortschritt zurückgesetzt');
     });
     $sheet.querySelector('#s-close').addEventListener('click', () => { $sheet.hidden = true; });
+    renderAsrBox();
+  }
+
+  // Offline-Bewertung (Whisper) laden / entfernen
+  let asrDownloading = false;
+  function renderAsrBox(pct) {
+    const box = document.getElementById('asr-box');
+    if (!box) return;
+    const s = S.settings;
+    if (asrDownloading) {
+      box.innerHTML = `<label style="flex:1">Offline-Bewertung wird geladen …<small>${pct != null ? Math.round(pct * 100) + ' %' : 'startet …'} – App offen lassen</small>
+        <div class="bar"><i style="width:${Math.round((pct || 0) * 100)}%"></i></div></label>`;
+    } else if (s.asr) {
+      box.innerHTML = `<label>Offline-Bewertung<small>✅ installiert – bewertet deine Aufnahmen ohne Internet</small></label>
+        <button class="btn secondary" id="asr-del" style="padding:8px 12px">Entfernen</button>`;
+      box.querySelector('#asr-del').addEventListener('click', async () => {
+        if (!confirm('Offline-Bewertung (~80 MB) vom Gerät löschen?')) return;
+        ASR.reset();
+        try { await caches.delete('transformers-cache'); } catch { /* ignorieren */ }
+        s.asr = false; save(); renderAsrBox();
+      });
+    } else {
+      box.innerHTML = `<label>Offline-Bewertung<small>Automatische Bewertung per Whisper-Modell, einmalig ~80 MB (WLAN empfohlen)</small></label>
+        <button class="btn" id="asr-dl" style="padding:8px 12px">Laden</button>`;
+      box.querySelector('#asr-dl').addEventListener('click', downloadAsr);
+    }
+  }
+  async function downloadAsr() {
+    asrDownloading = true; renderAsrBox();
+    ASR.onProgress = pct => renderAsrBox(pct);
+    try {
+      await ASR.ensure();
+      S.settings.asr = true; save();
+      navigator.storage?.persist?.().catch(() => {});
+      toast('✅ Offline-Bewertung bereit');
+    } catch (err) {
+      toast('⚠️ Laden fehlgeschlagen: ' + err.message, 4000);
+    } finally {
+      asrDownloading = false; ASR.onProgress = null; renderAsrBox();
+    }
   }
 
   // ── Start ────────────────────────────────────────────────────────────────

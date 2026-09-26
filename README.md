@@ -9,13 +9,13 @@ Grundlage sind die Phrasen aus dem Video [„20 Japanisch Vokabeln für deine Ja
 - **Quiz**: Hör-Quiz, Deutsch → Japanisch, Japanisch → Deutsch, gemischt, filterbar nach Kategorie
 - **Situations-Dialoge**: Restaurant, Konbini, Imbiss, Bahnhof, Hotel, Notfall
 - **Reise-Modus**: Suche, Favoriten, Großanzeige zum Vorzeigen (drehbar) mit Audio
-- **Selbst sprechen**: Die Spracherkennung (Chrome) vergleicht deine Aussprache
+- **Aussprache**: Aufnehmen & mit der Profi-Stimme vergleichen (ohne Signalton, iPhone + Android). Optional die automatische Offline-Bewertung per Whisper base (~80 MB, Download in ⚙️)
 - **Anzeige-Ebenen** einzeln schaltbar: Kanji/Kana, Hiragana-Lesung, Romaji, Deutsch
 - **Audio**: Neural-Stimmen als MP3 (Nanami, beim Personal Keita). Fällt eine MP3 aus, spricht die Stimme des Handys.
 - Punkte, Streak, Tagesziel, Level. Der Fortschritt bleibt lokal auf dem Gerät.
 
 ## Aufs Handy
-Die Seite in Chrome öffnen, dann **⋮ → „Zum Startbildschirm hinzufügen“** bzw. **„App installieren“** wählen. Nach dem ersten Laden funktioniert die App offline. Nur die Spracherkennung braucht Internet.
+Die Seite in Chrome öffnen, dann **⋮ → „Zum Startbildschirm hinzufügen“** bzw. **„App installieren“** wählen. Nach dem ersten Laden funktioniert alles offline, auch die Aussprache-Bewertung, sobald das Modell geladen ist.
 
 ## Entwicklung
 - Reines HTML/CSS/JS ohne Build-Schritt. Lokal: `python -m http.server` im Ordner.

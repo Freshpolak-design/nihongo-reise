@@ -311,3 +311,11 @@ main { padding: 6px 16px 24px; max-width: 640px; margin: 0 auto; outline: none; 
 
 .empty { text-align: center; padding: 30px 10px; color: var(--ink-2); }
 .empty .big { font-size: 3rem; }
+
+/* ── Aufnahme ───────────────────────────────────────────── */
+.round-btn.mic.recording { background: var(--bad); box-shadow: 0 0 0 calc(var(--lvl, 0) * 16px + 4px) color-mix(in srgb, var(--bad) 35%, transparent); transition: box-shadow .08s; }
+.rec-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+.rec-actions .btn { flex: 1; padding: 10px 8px; font-size: .9rem; }
+.rec-actions .btn.playing { animation: pulse .8s infinite; }
+.speak-result .asr:empty { display: none; }
+#asr-box .bar { margin-top: 8px; }
