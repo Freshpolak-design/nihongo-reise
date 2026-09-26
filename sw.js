@@ -1,8 +1,8 @@
 /* Offline-Cache: App-Dateien + alle MP3s vorab, Schriften bei erster Nutzung. */
-const VERSION = 'nr-v3';
+const VERSION = 'nr-v4';
 importScripts('data.js');
 
-const CORE = ['./', 'index.html', 'styles.css', 'app.js', 'data.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'whisper-worker.js'];
+const CORE = ['./', 'index.html', 'styles.css', 'app.js', 'data.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'whisper-worker.js'];
 const AUDIO = self.NR_DATA.phrases.map(p => `audio/${p.id}.mp3`);
 
 self.addEventListener('install', e => {
@@ -11,7 +11,7 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k))))
+    .then(keys => Promise.all(keys.filter(k => k.startsWith('nr-') && k !== VERSION).map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 

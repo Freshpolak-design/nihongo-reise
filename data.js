@@ -1,4 +1,4 @@
-/* Nihongo Reise – Lerninhalte.
+/* MG Nihongo – Lerninhalte.
  * Quelle der mit video:true markierten Einträge: „20 Japanisch Vokabeln für deine Japanreise!“
  * (WanderWeib Japan, https://www.youtube.com/watch?v=26VUZNqJ89c). Rest: ergänzte Reise-Basics.
  *

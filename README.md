@@ -1,4 +1,4 @@
-# 🎌 Nihongo Reise
+# 🎌 MG Nihongo
 
 Japanisch-Basics für die Japanreise trainieren: eine Web-App (PWA) fürs Handy, die offline läuft und Audio hat.
 

@@ -833,7 +833,7 @@
       <div class="setting" id="asr-box"></div>
       <div class="setting"><label>Japanische Handy-Stimme<small>${jaVoice() ? '✅ ' + esc(jaVoice().name) : '⚠️ keine gefunden – MP3 nutzen'}</small></label></div>
       <button class="btn bad block" id="s-reset" style="margin-top:14px">🗑️ Fortschritt zurücksetzen</button>
-      <p class="small muted" style="text-align:center;margin-top:16px">Nihongo Reise · ${D.phrases.length} Phrasen · Grundlage:
+      <p class="small muted" style="text-align:center;margin-top:16px">MG Nihongo · ${D.phrases.length} Phrasen · Grundlage:
         <a href="https://www.youtube.com/watch?v=26VUZNqJ89c" target="_blank" rel="noopener">WanderWeib-Video</a></p>
       <button class="btn secondary block" id="s-close">Fertig</button>
     </div>`;
