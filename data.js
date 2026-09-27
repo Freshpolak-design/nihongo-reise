@@ -97,8 +97,8 @@ self.NR_DATA = {
     { id: 'futatsu', cat: 'order', video: true, jp: '二つ', kana: 'ふたつ', romaji: 'futatsu', de: 'Zwei (Stück)', tts: 'ふたつ' },
     { id: 'mittsu', cat: 'order', video: true, jp: '三つ', kana: 'みっつ', romaji: 'mittsu', de: 'Drei (Stück)', tts: 'みっつ',
       tip: 'Kurze Pause vor dem „tsu“: „mit-tsu“.' },
-    { id: 'biru', cat: 'order', video: true, jp: 'ビールを一つお願いします', kana: 'ビールをひとつおねがいします', romaji: 'bīru o hitotsu onegaishimasu', de: 'Ein Bier, bitte',
-      tip: 'Muster: [Ding] o [Anzahl] onegaishimasu.' },
+    { id: 'biru', cat: 'order', video: true, jp: 'ビールをお願いします', kana: 'ビールをおねがいします', romaji: 'bīru o onegaishimasu', de: 'Ein Bier, bitte',
+      tip: 'Muster: [Ding] o onegaishimasu. Für mehrere die Anzahl einschieben: „bīru o futatsu onegaishimasu“ = zwei Bier.' },
     { id: 'kore', cat: 'order', video: true, jp: 'これ', kana: 'これ', romaji: 'kore', de: 'Das (hier)',
       tip: 'Auf die Karte oder das Plastik-Essen im Schaufenster zeigen.' },
     { id: 'kore_onegai', cat: 'order', video: true, jp: 'これをお願いします', kana: 'これをおねがいします', romaji: 'kore o onegaishimasu', de: 'Das bitte (höflich)' },
@@ -160,6 +160,8 @@ self.NR_DATA = {
     { id: 'yukkuri', cat: 'language', jp: 'ゆっくりお願いします', kana: 'ゆっくりおねがいします', romaji: 'yukkuri onegaishimasu', de: 'Langsamer, bitte' },
     { id: 'doitsu', cat: 'language', jp: 'ドイツから来ました', kana: 'ドイツからきました', romaji: 'Doitsu kara kimashita', de: 'Ich komme aus Deutschland' },
     { id: 'nihongo_sukoshi', cat: 'language', jp: '日本語は少しだけです', kana: 'にほんごはすこしだけです', romaji: 'nihongo wa sukoshi dake desu', de: 'Ich spreche nur ein bisschen Japanisch' },
+    { id: 'nihongo_jozu', cat: 'language', jp: '日本語はあまり上手じゃありません', kana: 'にほんごはあまりじょうずじゃありません', romaji: 'nihongo wa amari jōzu ja arimasen', de: 'Mein Japanisch ist nicht gut',
+      tip: 'Wörtlich „nicht sehr geschickt“ – höflich und bescheiden. Kürzer und genauso üblich: „nihongo ga heta desu“ (日本語が下手です).' },
 
     // ── Hotel ───────────────────────────────────────────────────────────────
     { id: 'yoyaku', cat: 'hotel', jp: '予約しています', kana: 'よやくしています', romaji: 'yoyaku shite imasu', de: 'Ich habe reserviert',

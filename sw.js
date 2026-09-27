@@ -1,5 +1,5 @@
 /* Offline-Cache: App-Dateien + alle MP3s vorab, Schriften bei erster Nutzung. */
-const VERSION = 'nr-v9';
+const VERSION = 'nr-v10';
 importScripts('data.js');
 
 const CORE = ['./', 'index.html', 'styles.css', 'app.js', 'data.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'whisper-worker.js'];
@@ -10,7 +10,10 @@ const AUDIO = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll([...CORE, ...AUDIO])).then(() => self.skipWaiting()));
+  // cache: 'reload' umgeht den HTTP-Cache des Browsers – sonst landen geänderte Audios als alte Fassung im neuen Cache
+  e.waitUntil(caches.open(VERSION)
+    .then(c => c.addAll([...CORE, ...AUDIO].map(u => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
