@@ -79,8 +79,12 @@
   const INTERVALS = [0, 1, 3, 7, 14, 30, 60]; // Tage bis zur nächsten Abfrage je Box
   const MASTER_BOX = 4;
   const card = id => S.cards[id] || (S.cards[id] = { box: 0, due: 0, seen: false, ok: 0, ko: 0 });
-  const isDue = id => { const c = S.cards[id]; return !!c && c.seen && c.due <= Date.now(); };
-  const isNew = id => !S.cards[id]?.seen;
+  // Geparkte Karten ruhen: weder fällig noch neu, bis sie zurückgeholt werden
+  const isParked = id => !!S.cards[id]?.parked;
+  const isDue = id => { const c = S.cards[id]; return !!c && c.seen && !c.parked && c.due <= Date.now(); };
+  const isNew = id => !S.cards[id]?.seen && !isParked(id);
+  const parkedIds = () => D.phrases.filter(p => isParked(p.id)).map(p => p.id);
+  function setParked(id, on) { card(id).parked = on; save(); }
   const mastered = id => (S.cards[id]?.box || 0) >= MASTER_BOX;
 
   function rateCard(id, grade) {
@@ -542,17 +546,20 @@
   }
   function catTile(c) {
     const pr = catProgress(c.id);
+    const parked = pr.ids.filter(isParked).length;
     return `<button class="cat-tile" style="--c:${c.color}" data-cat="${c.id}">
       ${pr.due ? `<span class="badge">${pr.due} fällig</span>` : ''}
       <span class="emoji">${c.emoji}</span><span class="name">${esc(c.name)}</span>
-      <span class="meta">${pr.total} Phrasen · ${pr.pct} %<div class="bar"><i style="width:${pr.pct}%"></i></div></span>
+      <span class="meta">${pr.total} Phrasen${parked ? ` · 🅿️ ${parked}` : ''} · ${pr.pct} %<div class="bar"><i style="width:${pr.pct}%"></i></div></span>
     </button>`;
   }
   function bindCatTiles() {
     $view.querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => {
       const pr = catProgress(b.dataset.cat);
+      const ids = pr.ids.filter(id => !isParked(id));
+      if (!ids.length) return toast('Alle Phrasen dieser Kategorie sind geparkt 🅿️');
       const order = id => isDue(id) ? 0 : isNew(id) ? 1 : 2;
-      startCards([...pr.ids].sort((a, b) => order(a) - order(b)), CAT[b.dataset.cat].name);
+      startCards(ids.sort((a, b) => order(a) - order(b)), CAT[b.dataset.cat].name);
     }));
   }
 
@@ -567,7 +574,8 @@
       <div class="mode-list" style="margin-top:12px">
         <button class="mode" data-start="due" style="--c:#FFE3E3"><span class="ico">🔁</span><div><b>Fällige wiederholen</b><span>${due.length ? `${due.length} Karten sind dran` : 'Gerade nichts fällig 🎉'}</span></div></button>
         <button class="mode" data-start="new" style="--c:#E6F4FF"><span class="ico">✨</span><div><b>Neue lernen</b><span>${fresh.length ? `Die nächsten ${Math.min(10, fresh.length)} von ${fresh.length} neuen Phrasen` : 'Alle Phrasen gesehen'}</span></div></button>
-        <button class="mode" data-start="video" style="--c:#FFF1CC"><span class="ico">▶️</span><div><b>Nur die Video-Phrasen</b><span>Die ${D.phrases.filter(p => p.video).length} Phrasen aus Tessas Video</span></div></button>
+        <button class="mode" data-start="video" style="--c:#FFF1CC"><span class="ico">▶️</span><div><b>Nur die Video-Phrasen</b><span>Die ${D.phrases.filter(p => p.video && !isParked(p.id)).length} Phrasen aus Tessas Video</span></div></button>
+        <button class="mode" data-start="parked" style="--c:#DDE3EC"><span class="ico">🅿️</span><div><b>Geparkt</b><span>${parkedIds().length ? `${parkedIds().length} Phrasen für später – ansehen &amp; zurückholen` : 'Nichts geparkt'}</span></div></button>
       </div>
       <h2 class="section-title">Nach Kategorie</h2>
       <div class="cat-grid">${D.categories.map(catTile).join('')}</div>`;
@@ -578,14 +586,38 @@
       const k = b.dataset.start;
       if (k === 'due') { if (!due.length) return toast('Nichts fällig – lern neue Phrasen! ✨'); startCards(due.slice(0, 30), 'Wiederholung'); }
       if (k === 'new') { if (!fresh.length) return toast('Du hast alle Phrasen gesehen 🎉'); startCards(fresh.slice(0, 10), 'Neue Phrasen'); }
-      if (k === 'video') startCards(shuffle(D.phrases.filter(p => p.video).map(p => p.id)), 'Video-Phrasen');
+      if (k === 'video') startCards(shuffle(D.phrases.filter(p => p.video && !isParked(p.id)).map(p => p.id)), 'Video-Phrasen');
+      if (k === 'parked') { if (!parkedIds().length) return toast('Nichts geparkt – tippe beim Lernen auf 🅿️ Parken'); renderParked(); }
     }));
     bindCatTiles();
   }
 
+  // Übersicht der geparkten Phrasen: einzeln oder alle zurückholen
+  function renderParked() {
+    const ids = parkedIds();
+    if (!ids.length) { toast('Alle zurückgeholt ✅'); return renderCardsMenu(); }
+    $view.innerHTML = `
+      <div class="progress-top"><button class="close-x" id="pk-back" aria-label="Zurück">←</button><h2 class="section-title" style="margin:0;flex:1">🅿️ Geparkt (${ids.length})</h2></div>
+      <p class="small muted" style="margin-top:0">Diese Phrasen kommen nicht in Karten und Quiz, bis du sie zurückholst. Dialoge und Reise-Modus zeigen sie weiterhin.</p>
+      <button class="btn secondary block" id="pk-all" style="margin-bottom:12px">↩️ Alle zurückholen</button>
+      <div class="list">${ids.map(id => { const p = P[id]; return `<div class="list-item" style="--c:${CAT[p.cat].color}">
+        ${phraseHTML(p, { compact: true, all: true, hide: ['kana'] })}
+        <button class="mini-play" data-play="${id}" aria-label="Anhören">🔊</button>
+        <button class="mini-play" data-unpark="${id}" aria-label="Zurückholen" title="Zurückholen">↩️</button></div>`; }).join('')}</div>`;
+    bindCommon();
+    document.getElementById('pk-back').addEventListener('click', renderCardsMenu);
+    document.getElementById('pk-all').addEventListener('click', () => {
+      if (!confirm(`Alle ${ids.length} geparkten Phrasen zurückholen?`)) return;
+      ids.forEach(id => { S.cards[id].parked = false; }); save(); renderParked();
+    });
+    $view.querySelectorAll('[data-unpark]').forEach(b => b.addEventListener('click', () => {
+      setParked(b.dataset.unpark, false); toast('↩️ Zurückgeholt'); renderParked();
+    }));
+  }
+
   function startCards(ids, title) {
     if (!ids.length) return toast('Keine Karten gefunden');
-    sess = { type: 'cards', title, queue: [...ids], total: ids.length, done: 0, xp: 0, stats: { again: 0, hard: 0, good: 0 } };
+    sess = { type: 'cards', title, queue: [...ids], total: ids.length, done: 0, xp: 0, stats: { again: 0, hard: 0, good: 0, park: 0 } };
     // Offline: Whisper schon beim Start der Runde in den Speicher laden, damit die erste Bewertung nicht wartet
     if (S.settings.mode === 'offline' && S.settings.asr) ASR.ensure().catch(() => {});
     renderCard();
@@ -593,10 +625,10 @@
   function renderCard() {
     const id = sess.queue[0];
     if (!id) {
-      const { good, hard, again } = sess.stats;
+      const { good, hard, again, park } = sess.stats;
       return renderResult({
         emoji: again === 0 ? '🏆' : '💪', title: `${sess.title} geschafft!`,
-        lines: [`😎 ${good} gewusst · 🤔 ${hard} schwer · 😵 ${again}× nochmal`],
+        lines: [`😎 ${good} gewusst · 🔁 ${hard} bald nochmal · 😵 ${again}× nochmal${park ? ` · 🅿️ ${park} geparkt` : ''}`],
         xp: sess.xp, again: () => go('cards'), againText: '🃏 Weitere Karten',
       });
     }
@@ -623,8 +655,9 @@
         </div>
       </div></div>
       <div class="rate" id="rate" hidden>
+        <button class="btn park" data-park>🅿️<small>Parken</small></button>
         <button class="btn bad" data-grade="again">😵<small>Nochmal</small></button>
-        <button class="btn warn" data-grade="hard">🤔<small>Schwer</small></button>
+        <button class="btn warn" data-grade="hard">🔁<small>Bald nochmal</small></button>
         <button class="btn good" data-grade="good">😎<small>Gewusst</small></button>
       </div>`;
     bindCommon();
@@ -648,6 +681,13 @@
       else sess.done++;
       stopAudio(); renderCard();
     }));
+    $view.querySelector('[data-park]').addEventListener('click', () => {
+      setParked(id, true); sess.stats.park++;
+      sess.queue = sess.queue.filter(x => x !== id); // auch eine per „Nochmal“ eingereihte Wiederholung entfernen
+      sess.done++;
+      toast('🅿️ Geparkt – zurückholen unter Karten → Geparkt');
+      stopAudio(); renderCard();
+    });
     if (dir === 'jp-de' && S.settings.autoplay) play(id, flash.querySelector('.front [data-play]'));
   }
 
@@ -673,9 +713,10 @@
     ['mix', '🎲', 'Gemischt', 'Alles durcheinander', '#EBDDFF'],
   ];
   function quizPool(cat) {
-    if (cat === 'weak') return D.phrases.filter(p => { const c = S.cards[p.id]; return c && c.ko > 0 && c.box < 3; });
-    if (cat === 'video') return D.phrases.filter(p => p.video);
-    return D.phrases.filter(p => cat === 'all' || p.cat === cat);
+    const active = D.phrases.filter(p => !isParked(p.id));
+    if (cat === 'weak') return active.filter(p => { const c = S.cards[p.id]; return c && c.ko > 0 && c.box < 3; });
+    if (cat === 'video') return active.filter(p => p.video);
+    return active.filter(p => cat === 'all' || p.cat === cat);
   }
   function renderQuizMenu() {
     const chips = [['all', '🌏 Alle'], ['video', '▶️ Video'], ['weak', '😵 Schwierige'], ...D.categories.map(c => [c.id, `${c.emoji} ${c.name}`])];

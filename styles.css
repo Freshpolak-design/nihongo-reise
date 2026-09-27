@@ -317,3 +317,9 @@ main { padding: 6px 16px 24px; max-width: 640px; margin: 0 auto; outline: none; 
 .mode-switch .seg button.on { background: var(--accent); color: #fff; }
 .mode-switch .desc { font-size: .8rem; color: var(--ink-2); margin-top: 6px; line-height: 1.35; }
 .mode-switch .bar { margin-top: 8px; }
+
+/* Parken: vierter Bewertungsknopf, bewusst ruhig gefärbt */
+.rate { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.rate .btn { padding: 10px 4px; }
+.rate .btn small { line-height: 1.15; }
+.btn.park { background: #6B7686; box-shadow: 0 4px 0 #474F5B; }
