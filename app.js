@@ -11,9 +11,9 @@
   // ── Speicher (lokal auf dem Gerät) ───────────────────────────────────────
   const KEY = 'nihongo-reise-v1';
   const DEFAULTS = {
-    cards: {}, dialogs: {}, favs: [], xp: 0,
+    cards: {}, dialogs: {}, favs: [], playlist: [], xp: 0,
     streak: { days: 0, last: null }, today: { date: null, xp: 0 },
-    settings: { jp: true, kana: true, romaji: true, de: true, autoplay: true, dir: 'de-jp', audio: 'mp3', goal: 50, asr: false, mode: 'online' },
+    settings: { jp: true, kana: true, romaji: true, de: true, autoplay: true, dir: 'de-jp', audio: 'mp3', goal: 50, asr: false, mode: 'online', plShuffle: false, plRepeat: false },
   };
   let S = load();
   function load() {
@@ -134,7 +134,7 @@
   if ('speechSynthesis' in window) { speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices(); }
 
   function play(id, btn) {
-    stopAudio();
+    stopAudio(); PL.pause();
     const p = P[id];
     if (!p) return;
     setPlaying(btn, true);
@@ -154,6 +154,110 @@
     const v = jaVoice(); if (v) u.voice = v;
     u.onend = u.onerror = () => setPlaying(btn, false);
     speechSynthesis.speak(u);
+  }
+
+  // ── Playlist: Deutsch → Pause → Japanisch → Pause ────────────────────────
+  // Ein einziges Audio-Element, Pausen als stille MP3s statt Timer: so läuft die
+  // Playlist auch bei gesperrtem Bildschirm weiter (Timer werden dort gedrosselt).
+  const PL = {
+    audio: null, order: [], idx: 0, step: 0, playing: false, mediaReady: false,
+    STEPS: ['de', 'pause-short', 'jp', 'pause-long'],
+    src(id, step) {
+      return { de: `audio/de/${id}.mp3`, 'pause-short': 'audio/pause-short.mp3', jp: `audio/${id}.mp3`, 'pause-long': 'audio/pause-long.mp3' }[this.STEPS[step]];
+    },
+    ids() { return S.playlist.filter(id => P[id]); },
+    current() { return this.order[this.idx]; },
+    phase() { return this.STEPS[this.step]; },
+    build(startId) {
+      const ids = this.ids();
+      this.order = S.settings.plShuffle ? shuffle(ids) : ids;
+      if (startId && S.settings.plShuffle) this.order = [startId, ...this.order.filter(x => x !== startId)];
+      this.idx = startId ? Math.max(0, this.order.indexOf(startId)) : 0;
+      this.step = 0;
+    },
+    play(startId) {
+      if (!this.ids().length) return toast('Playlist ist leer – schalte bei einer Karte 🎧 ein');
+      stopAudio();
+      if (startId || !this.order.length || !this.ids().includes(this.current())) this.build(startId);
+      if (!this.audio) {
+        this.audio = new Audio();
+        this.audio.onended = () => this.nextStep();
+        this.audio.onerror = () => { if (this.playing) this.nextStep(); }; // fehlende Datei überspringen
+      }
+      this.playing = true;
+      this.playStep();
+    },
+    playStep() {
+      if (!this.current()) return this.stop();
+      this.audio.src = this.src(this.current(), this.step);
+      this.audio.play().catch(err => {
+        if (err.name === 'NotAllowedError') { this.playing = false; this.ui(); } // Browser verlangt erst einen Tipp
+      });
+      this.media(); this.ui();
+    },
+    nextStep() {
+      if (!this.playing) return;
+      if (++this.step >= this.STEPS.length) {
+        this.step = 0;
+        if (++this.idx >= this.order.length) {
+          if (!S.settings.plRepeat) return this.stop();
+          this.build(); // Endlos: von vorn, bei Zufall neu gemischt
+        }
+      }
+      this.playStep();
+    },
+    skip(delta) {
+      if (!this.order.length) this.build();
+      const next = this.idx + delta, n = this.order.length;
+      if (S.settings.plRepeat && next >= n) this.build(); // Endlos: nach der letzten wieder von vorn
+      else this.idx = S.settings.plRepeat && next < 0 ? n - 1 : Math.min(Math.max(0, next), n - 1);
+      this.step = 0;
+      if (this.playing) this.playStep(); else this.ui();
+    },
+    pause() {
+      if (!this.playing) return;
+      this.playing = false; this.audio?.pause(); this.ui();
+    },
+    stop() {
+      this.playing = false; this.audio?.pause(); this.idx = 0; this.step = 0; this.order = []; this.ui();
+    },
+    toggle() { this.playing ? this.pause() : this.play(); },
+    setShuffle(on) {
+      S.settings.plShuffle = on; save();
+      const cur = this.current(), step = this.step;
+      if (cur) { this.build(cur); this.step = step; } // aktuelle Phrase läuft ungestört weiter
+      this.ui();
+    },
+    remove(id) {
+      S.playlist = S.playlist.filter(x => x !== id); save();
+      const at = this.order.indexOf(id);
+      if (at < 0) return this.ui();
+      const wasCurrent = at === this.idx;
+      this.order.splice(at, 1);
+      if (at < this.idx) this.idx--;
+      if (wasCurrent) { this.step = 0; if (this.idx >= this.order.length) this.idx = 0; if (this.playing) return this.playStep(); }
+      this.ui();
+    },
+    media() {
+      if (!('mediaSession' in navigator)) return;
+      const p = P[this.current()];
+      if (p) navigator.mediaSession.metadata = new MediaMetadata({
+        title: p.de, artist: `${p.jp} · ${p.romaji}`, album: 'MG Nihongo · Playlist',
+        artwork: [{ src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
+      });
+      navigator.mediaSession.playbackState = this.playing ? 'playing' : 'paused';
+      if (this.mediaReady) return;
+      this.mediaReady = true;
+      const h = { play: () => this.play(), pause: () => this.pause(), nexttrack: () => this.skip(1), previoustrack: () => this.skip(-1) };
+      for (const [k, fn] of Object.entries(h)) { try { navigator.mediaSession.setActionHandler(k, fn); } catch { /* nicht unterstützt */ } }
+    },
+    ui() { updatePlaylistView(); updatePlPill(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = this.playing ? 'playing' : 'paused'; },
+  };
+  function inPlaylist(id) { return S.playlist.includes(id); }
+  function setInPlaylist(id, on) {
+    if (on && !inPlaylist(id)) S.playlist.push(id);
+    if (!on) return PL.remove(id);
+    save(); PL.ui();
   }
 
   // ── Aussprache: eigene Aufnahme (ohne System-Signalton) + Offline-Bewertung ─
@@ -236,7 +340,7 @@
   }
 
   function playSrc(src, btn) {
-    stopAudio();
+    stopAudio(); PL.pause();
     return new Promise(resolve => {
       const a = new Audio(src);
       currentAudio = a; setPlaying(btn, true);
@@ -306,7 +410,7 @@
   let activeRec = null;
   function listenOnline(id, btn, out) {
     if (activeRec) { activeRec.abort(); activeRec = null; return; }
-    stopAudio();
+    stopAudio(); PL.pause();
     const p = P[id];
     const r = new SR();
     // interimResults: Safari liefert oft kein Endergebnis, dann wird das letzte Zwischenergebnis bewertet
@@ -367,7 +471,7 @@
       return;
     }
     const p = P[id];
-    stopAudio();
+    stopAudio(); PL.pause();
     btn.classList.add('recording'); btn.textContent = '⏹';
     out.innerHTML = `<div class="speak-result ok">🎙️ Sprich jetzt: <b>${esc(p.romaji)}</b><br><span class="small">Stoppt automatisch, wenn du fertig bist – oder tippe ⏹.</span></div>`;
     let blob;
@@ -459,6 +563,9 @@
     document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     updateChips();
     ({ home: renderHome, cards: renderCardsMenu, quiz: renderQuizMenu, dialogs: renderDialogMenu, travel: renderTravel })[tab]();
+    if (tab === 'cards' && openPlaylistNext) renderPlaylist();
+    openPlaylistNext = false;
+    updatePlPill();
     window.scrollTo(0, 0);
   }
 
@@ -575,6 +682,7 @@
         <button class="mode" data-start="due" style="--c:#FFE3E3"><span class="ico">🔁</span><div><b>Fällige wiederholen</b><span>${due.length ? `${due.length} Karten sind dran` : 'Gerade nichts fällig 🎉'}</span></div></button>
         <button class="mode" data-start="new" style="--c:#E6F4FF"><span class="ico">✨</span><div><b>Neue lernen</b><span>${fresh.length ? `Die nächsten ${Math.min(10, fresh.length)} von ${fresh.length} neuen Phrasen` : 'Alle Phrasen gesehen'}</span></div></button>
         <button class="mode" data-start="video" style="--c:#FFF1CC"><span class="ico">▶️</span><div><b>Nur die Video-Phrasen</b><span>Die ${D.phrases.filter(p => p.video && !isParked(p.id)).length} Phrasen aus Tessas Video</span></div></button>
+        <button class="mode" data-start="playlist" style="--c:#D9F2EF"><span class="ico">🎧</span><div><b>Playlist</b><span>${PL.ids().length ? `${PL.ids().length} Phrasen · Deutsch → Japanisch vorlesen` : 'Leer – bei einer Karte 🎧 einschalten'}</span></div></button>
         <button class="mode" data-start="parked" style="--c:#DDE3EC"><span class="ico">🅿️</span><div><b>Geparkt</b><span>${parkedIds().length ? `${parkedIds().length} Phrasen für später – ansehen &amp; zurückholen` : 'Nichts geparkt'}</span></div></button>
       </div>
       <h2 class="section-title">Nach Kategorie</h2>
@@ -588,8 +696,99 @@
       if (k === 'new') { if (!fresh.length) return toast('Du hast alle Phrasen gesehen 🎉'); startCards(fresh.slice(0, 10), 'Neue Phrasen'); }
       if (k === 'video') startCards(shuffle(D.phrases.filter(p => p.video && !isParked(p.id)).map(p => p.id)), 'Video-Phrasen');
       if (k === 'parked') { if (!parkedIds().length) return toast('Nichts geparkt – tippe beim Lernen auf 🅿️ Parken'); renderParked(); }
+      if (k === 'playlist') { if (!PL.ids().length) return toast('Playlist ist leer – schalte beim Lernen auf der Rückseite einer Karte 🎧 ein'); renderPlaylist(); }
     }));
     bindCatTiles();
+  }
+
+  // Playlist-Ansicht: Steuerung, aktuelle Phrase, Liste
+  function renderPlaylist() {
+    const s = S.settings;
+    $view.innerHTML = `<div id="pl-view">
+      <div class="progress-top"><button class="close-x" id="pl-back" aria-label="Zurück">←</button>
+        <h2 class="section-title" style="margin:0;flex:1">🎧 Playlist (<span id="pl-count"></span>)</h2></div>
+      <div class="card pl-now" id="pl-now"></div>
+      <div class="pl-controls">
+        <button class="pl-btn ${s.plShuffle ? 'on' : ''}" id="pl-shuffle" aria-label="Zufällig"><span>🔀</span><small>Zufällig</small></button>
+        <button class="pl-btn" id="pl-prev" aria-label="Zurück"><span>⏮</span></button>
+        <button class="round-btn big" id="pl-toggle" aria-label="Abspielen">▶️</button>
+        <button class="pl-btn" id="pl-next" aria-label="Weiter"><span>⏭</span></button>
+        <button class="pl-btn ${s.plRepeat ? 'on' : ''}" id="pl-repeat" aria-label="Endlos"><span>🔁</span><small>Endlos</small></button>
+      </div>
+      <div class="list" id="pl-list"></div>
+      <button class="btn secondary block" id="pl-clear" style="margin-top:14px">🗑️ Playlist leeren</button>
+    </div>`;
+    document.getElementById('pl-back').addEventListener('click', renderCardsMenu);
+    document.getElementById('pl-toggle').addEventListener('click', () => PL.toggle());
+    document.getElementById('pl-prev').addEventListener('click', () => PL.skip(-1));
+    document.getElementById('pl-next').addEventListener('click', () => PL.skip(1));
+    document.getElementById('pl-shuffle').addEventListener('click', e => {
+      PL.setShuffle(!S.settings.plShuffle); e.currentTarget.classList.toggle('on', S.settings.plShuffle);
+      toast(S.settings.plShuffle ? '🔀 Zufällig an' : '🔀 Zufällig aus');
+    });
+    document.getElementById('pl-repeat').addEventListener('click', e => {
+      S.settings.plRepeat = !S.settings.plRepeat; save(); e.currentTarget.classList.toggle('on', S.settings.plRepeat);
+      toast(S.settings.plRepeat ? '🔁 Endlos an' : '🔁 Endlos aus');
+    });
+    document.getElementById('pl-clear').addEventListener('click', () => {
+      if (!confirm('Alle Phrasen aus der Playlist entfernen?')) return;
+      PL.stop(); S.playlist = []; save(); renderCardsMenu();
+    });
+    document.getElementById('pl-list').addEventListener('click', e => {
+      const rm = e.target.closest('[data-pl-rm]');
+      if (rm) { e.stopPropagation(); PL.remove(rm.dataset.plRm); if (!PL.ids().length) renderCardsMenu(); return; }
+      const item = e.target.closest('[data-pl-id]');
+      if (item) PL.play(item.dataset.plId);
+    });
+    updatePlaylistView(); updatePlPill();
+  }
+  function updatePlaylistView() {
+    const view = document.getElementById('pl-view');
+    if (!view) return;
+    const ids = PL.ids(), cur = PL.current(), p = P[cur];
+    document.getElementById('pl-count').textContent = ids.length;
+    const tgl = document.getElementById('pl-toggle');
+    tgl.textContent = PL.playing ? '⏸' : '▶️';
+    tgl.classList.toggle('playing', PL.playing);
+    const phase = PL.phase();
+    document.getElementById('pl-now').innerHTML = p
+      ? `<div class="pl-steps"><span class="${phase === 'de' ? 'on' : ''}">🇩🇪 Deutsch</span><span>→</span><span class="${phase === 'jp' ? 'on' : ''}">🇯🇵 Japanisch</span><span class="${phase === 'pause-long' ? 'on' : ''}">🗣️ Nachsprechen</span></div>
+         <div class="de" style="font-size:1.25rem;font-weight:800;margin:10px 0 6px">${esc(p.de)}</div>
+         ${phraseHTML(p, { hide: ['de'] })}
+         <div class="small muted" style="margin-top:8px">${PL.idx + 1} / ${PL.order.length}</div>`
+      : `<div class="empty" style="padding:14px"><div class="big">🎧</div>Tippe ▶️ – jede Phrase kommt erst auf Deutsch, dann auf Japanisch, danach bleibt kurz Zeit zum Nachsprechen.</div>`;
+    // Liste nur neu aufbauen, wenn sich ihr Inhalt ändert – sonst gehen Tipps während der Wiedergabe verloren
+    const list = document.getElementById('pl-list'), sig = ids.join(',');
+    if (list.dataset.sig !== sig) {
+      list.dataset.sig = sig;
+      list.innerHTML = ids.map(id => {
+        const x = P[id];
+        return `<div class="list-item pl-item" style="--c:${CAT[x.cat].color}" data-pl-id="${id}" role="button" tabindex="0">
+          ${phraseHTML(x, { compact: true, all: true, hide: ['kana'] })}
+          <button class="mini-play" data-pl-rm="${id}" aria-label="Entfernen">✕</button></div>`;
+      }).join('');
+    }
+    list.querySelectorAll('.pl-item').forEach(el => el.classList.toggle('current', el.dataset.plId === cur));
+  }
+  // Kleine Steuerleiste, wenn die Playlist läuft, du aber woanders in der App bist
+  let openPlaylistNext = false;
+  function updatePlPill() {
+    let pill = document.getElementById('pl-pill');
+    const show = PL.order.length && PL.current() && !document.getElementById('pl-view');
+    document.body.classList.toggle('has-pill', !!show);
+    if (!show) { pill?.remove(); return; }
+    if (!pill) {
+      pill = document.createElement('div');
+      pill.id = 'pl-pill'; pill.className = 'pl-pill';
+      pill.addEventListener('click', e => {
+        if (e.target.closest('[data-pill-toggle]')) return PL.toggle();
+        if (location.hash !== '#cards') { openPlaylistNext = true; location.hash = 'cards'; } // render() öffnet sie
+        else { sess = null; stopAudio(); renderPlaylist(); }
+      });
+      document.body.appendChild(pill);
+    }
+    const p = P[PL.current()];
+    pill.innerHTML = `<span class="pl-pill-text">🎧 ${esc(p.de)}</span><button data-pill-toggle aria-label="Abspielen/Pause">${PL.playing ? '⏸' : '▶️'}</button>`;
   }
 
   // Übersicht der geparkten Phrasen: einzeln oder alle zurückholen
@@ -648,6 +847,8 @@
           <div class="top">${catTag(p)}${videoTag(p)}</div>
           ${phraseHTML(p)}
           <div style="margin-top:12px">${tipHTML(p)}</div>
+          <label class="pl-toggle"><span>🎧 In Playlist</span>
+            <input type="checkbox" class="switch" id="pl-sw" ${inPlaylist(id) ? 'checked' : ''}></label>
           <div class="actions right"><span class="small muted">${S.settings.mode === 'offline' ? 'Anhören, aufnehmen &amp; vergleichen' : 'Anhören &amp; nachsprechen'}</span>
             <button class="round-btn" data-play="${id}" aria-label="Anhören">🔊</button>
             <button class="round-btn mic" id="mic" aria-label="Nachsprechen">🎤</button></div>
@@ -672,6 +873,10 @@
       if (S.settings.autoplay) play(id, flash.querySelector('.back [data-play]'));
     });
     document.getElementById('mic').addEventListener('click', e => onMic(id, e.currentTarget, out));
+    document.getElementById('pl-sw').addEventListener('change', e => {
+      setInPlaylist(id, e.target.checked);
+      toast(e.target.checked ? `🎧 Zur Playlist hinzugefügt (${S.playlist.length})` : '🎧 Aus der Playlist entfernt');
+    });
     $view.querySelectorAll('[data-grade]').forEach(b => b.addEventListener('click', () => {
       const g = b.dataset.grade;
       rateCard(id, g); sess.stats[g]++;

@@ -1,9 +1,13 @@
 /* Offline-Cache: App-Dateien + alle MP3s vorab, Schriften bei erster Nutzung. */
-const VERSION = 'nr-v7';
+const VERSION = 'nr-v9';
 importScripts('data.js');
 
 const CORE = ['./', 'index.html', 'styles.css', 'app.js', 'data.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'whisper-worker.js'];
-const AUDIO = self.NR_DATA.phrases.map(p => `audio/${p.id}.mp3`);
+const AUDIO = [
+  ...self.NR_DATA.phrases.map(p => `audio/${p.id}.mp3`),
+  ...self.NR_DATA.phrases.map(p => `audio/de/${p.id}.mp3`), // Playlist: deutsche Ansage
+  'audio/pause-short.mp3', 'audio/pause-long.mp3',
+];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll([...CORE, ...AUDIO])).then(() => self.skipWaiting()));
