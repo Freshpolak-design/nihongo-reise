@@ -337,7 +337,7 @@ main { padding: 6px 16px 24px; max-width: 640px; margin: 0 auto; outline: none; 
 .pl-btn.on { background: var(--good); box-shadow: 0 3px 0 color-mix(in srgb, var(--good) 60%, #000); }
 .pl-btn.on small { color: #fff; }
 .pl-item.current { outline: 2px solid var(--accent); }
-.pl-pill { position: fixed; left: 16px; right: 16px; bottom: calc(var(--tabbar-h) + 10px + env(safe-area-inset-bottom)); z-index: 30;
+.pl-pill { position: fixed; left: 16px; right: 16px; bottom: calc(var(--tabbar-h) + 10px + env(safe-area-inset-bottom)); z-index: 30; touch-action: pan-y; user-select: none; -webkit-user-select: none;
   max-width: 608px; margin: 0 auto; display: flex; align-items: center; gap: 10px; background: #1F2228; color: var(--ink);
   border-radius: 16px; padding: 8px 8px 8px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.35); cursor: pointer; }
 .pl-pill-text { flex: 1; font-weight: 700; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -780,7 +780,40 @@
     if (!pill) {
       pill = document.createElement('div');
       pill.id = 'pl-pill'; pill.className = 'pl-pill';
+      // Seitlich wegwischen → Leiste verschwindet und die Playlist stoppt
+      let startX = null, dx = 0, dragging = false, t0 = 0, justSwiped = false;
+      pill.addEventListener('pointerdown', e => {
+        startX = e.clientX; dx = 0; dragging = false; t0 = performance.now();
+        pill.style.transition = 'none';
+      });
+      pill.addEventListener('pointermove', e => {
+        if (startX === null) return;
+        dx = e.clientX - startX;
+        if (Math.abs(dx) > 8) dragging = true;
+        if (dragging) {
+          pill.style.transform = `translateX(${dx}px)`;
+          pill.style.opacity = String(Math.max(0.15, 1 - Math.abs(dx) / pill.offsetWidth));
+        }
+      });
+      const endDrag = () => {
+        if (startX === null) return;
+        const speed = Math.abs(dx) / Math.max(1, performance.now() - t0); // px pro ms
+        startX = null;
+        pill.style.transition = 'transform .2s ease-out, opacity .2s ease-out';
+        if (!dragging) return;
+        justSwiped = true; // den folgenden Klick nicht als Tipp werten
+        if (Math.abs(dx) > pill.offsetWidth * 0.35 || speed > 0.6) {
+          pill.style.transform = `translateX(${dx > 0 ? 110 : -110}%)`;
+          pill.style.opacity = '0';
+          setTimeout(() => PL.stop(), 200); // stop() blendet die Leiste endgültig aus
+        } else {
+          pill.style.transform = ''; pill.style.opacity = '';
+        }
+      };
+      pill.addEventListener('pointerup', endDrag);
+      pill.addEventListener('pointercancel', endDrag);
       pill.addEventListener('click', e => {
+        if (justSwiped) { justSwiped = false; return; }
         if (e.target.closest('[data-pill-toggle]')) return PL.toggle();
         if (location.hash !== '#cards') { openPlaylistNext = true; location.hash = 'cards'; } // render() öffnet sie
         else { sess = null; stopAudio(); renderPlaylist(); }
